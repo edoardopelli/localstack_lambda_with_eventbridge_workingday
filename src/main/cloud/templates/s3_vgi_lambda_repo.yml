@@ -1,0 +1,13 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create an S3 bucket on LocalStack.
+
+Resources:
+  VGILambdaRepoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: vgi-lambda-repo
+
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref VGILambdaRepoBucket

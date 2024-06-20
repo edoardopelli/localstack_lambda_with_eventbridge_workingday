@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create S3 buckets, Lambda function, and EventBridge rule.
+
+Resources:
+  S3BucketScheduler:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: vgi-step-functions-scheduler
+
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::vgi-step-functions-scheduler
+                  - arn:aws:s3:::vgi-step-functions-scheduler/*
+                  - arn:aws:s3:::vgi-lambda-repo
+                  - arn:aws:s3:::vgi-lambda-repo/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: '*'
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ReadExcelFunction
+      Handler: org.cheetah.lsf.CheetahLambdaStepfunctionsApplication::handleRequest
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: vgi-lambda-repo
+        S3Key: lambda-SF-1.0.0-SNAPSHOT.jar
+      Runtime: java21
+      MemorySize: 1024
+      Timeout: 60
+
+  StepFunctionStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: POCStateMachine
+      RoleArn: !GetAtt LambdaExecutionRole.Arn
+      DefinitionString: |
+        {
+          "StartAt": "HelloWorld",
+          "States": {
+            "HelloWorld": {
+              "Type": "Pass",
+              "Result": "Hello, World!",
+              "End": true
+            }
+          }
+        }
+
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: LambdaScheduleRule
+      ScheduleExpression: 'cron(55 8 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: "LambdaFunctionTarget"
+          Input: '{"SF_NAME":"arn:aws:states:us-east-1:000000000000:stateMachine:POCStateMachine","SF_INPUT_PARAMS":{"nestedKey":"nestedValue"},"EXEC_ON_WORKING_DAY_NUMBER": "13"}'       
+          RoleArn: !GetAtt LambdaExecutionRole.Arn
+
+  LambdaPermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt EventBridgeRule.Arn
+
+Outputs:
+  S3BucketSchedulerName:
+    Description: Name of the S3 bucket for the scheduler
+    Value: !Ref S3BucketScheduler
+
+
+  S3BucketLambdaRepoName:
+    Description: Name of the S3 bucket for the Lambda repository
+    Value: !Ref S3BucketLambdaRepo
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LambdaFunction.Arn
+
+  StepFunctionArn:
+    Description: ARN of the Step Function
+    Value: !Ref StepFunctionStateMachine

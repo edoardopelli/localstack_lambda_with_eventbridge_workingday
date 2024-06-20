@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to create an S3 bucket, Lambda function, S3 trigger, and EventBridge rule on LocalStack.
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: vgi-step-functions-scheduler
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::vgi-step-functions-scheduler
+                  - arn:aws:s3:::vgi-step-functions-scheduler/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ReadExcelFunction
+      Handler: org.cheetah.lsf.CheetahLambdaStepfunctionsApplication
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: vgi-step-functions-scheduler
+        S3Key: lambda-SF-1.0.0-SNAPSHOT.jar
+      Runtime: java21
+      MemorySize: 1024
+      Timeout: 60
+
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: LambdaScheduleRule
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: "LambdaFunctionTarget"
+          Input: '{"argument1":"value1","argument2":"value2"}'
+      RoleArn: !GetAtt LambdaExecutionRole.Arn
+
+  LambdaPermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt EventBridgeRule.Arn
+
+  S3BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref S3Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt LambdaFunction.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LambdaFunction.Arn
